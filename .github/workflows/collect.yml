@@ -1,0 +1,35 @@
+name: Twitch Data Collector
+
+on:
+  schedule:
+    - cron: '0,15,30,45 * * * *'   # every 15 minutes
+  workflow_dispatch:                 # allow manual trigger from GitHub UI
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5               # fail fast if Twitch API hangs
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: collector/package-lock.json
+
+      - name: Install dependencies
+        working-directory: collector
+        run: npm ci
+
+      - name: Run collector
+        working-directory: collector
+        env:
+          TWITCH_CLIENT_ID:      ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET:  ${{ secrets.TWITCH_CLIENT_SECRET }}
+          SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY:  ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: node index.js
