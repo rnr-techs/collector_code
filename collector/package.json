@@ -1,0 +1,13 @@
+{
+  "name": "cipherstream-collector",
+  "version": "1.0.0",
+  "description": "15-minute Twitch category snapshot collector",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.43.4"
+  }
+}
