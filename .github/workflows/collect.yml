@@ -1,4 +1,4 @@
-name: Twitch Data Collector
+name: Twitch Data Collector v1
 
 on:
   schedule:
