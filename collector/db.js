@@ -8,11 +8,27 @@ let _client = null
 
 function getClient() {
   if (_client) return _client
-  _client = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_KEY,
-    { auth: { persistSession: false } }
-  )
+
+  const key = process.env.SUPABASE_SERVICE_KEY
+  const url = process.env.SUPABASE_URL
+
+  if (!key || !url) throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_KEY')
+
+  _client = createClient(url, key, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionFromUrl: false,
+    },
+    global: {
+      headers: {
+        // Explicitly set the Authorization header so the service role
+        // key is sent on every request and never downgraded to anon.
+        Authorization: `Bearer ${key}`,
+      },
+    },
+  })
+
   return _client
 }
 
