@@ -71,7 +71,7 @@ export async function getGameById(twitchGameId) {
 //   real competition, not an inflated total that includes tiny streamers.
 //
 export async function getCategorySnapshot(twitchGameId, storeTop = 20) {
-  const MAX_CHANNEL_PAGES = 5  // max 500 additional channels counted
+  const MAX_CHANNEL_PAGES = 15  // max 1500 additional channels counted (1600 total)
 
   // Page 1 — fetch top 100 streams
   const page1 = await twitchGet('/streams', { game_id: twitchGameId, first: 100 })
