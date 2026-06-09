@@ -9,7 +9,6 @@ let _token     = null
 let _expiresAt = 0
 
 // ── getAppToken ───────────────────────────────────────────────
-// Fetches a new App Access Token when the cached one expires.
 async function getAppToken() {
   if (_token && Date.now() < _expiresAt) return _token
 
@@ -25,12 +24,11 @@ async function getAppToken() {
   if (!res.ok) throw new Error(`Twitch token error: ${JSON.stringify(data)}`)
 
   _token     = data.access_token
-  _expiresAt = Date.now() + (data.expires_in - 300) * 1000  // 5-min buffer
+  _expiresAt = Date.now() + (data.expires_in - 300) * 1000
   return _token
 }
 
 // ── twitchGet ─────────────────────────────────────────────────
-// Authenticated GET helper.
 async function twitchGet(path, params = {}) {
   const token  = await getAppToken()
   const qs     = new URLSearchParams(params).toString()
@@ -49,7 +47,6 @@ async function twitchGet(path, params = {}) {
 }
 
 // ── getGameById ───────────────────────────────────────────────
-// Look up a single game by Twitch game ID.
 export async function getGameById(twitchGameId) {
   const data = await twitchGet('/games', { id: twitchGameId })
   return data.data?.[0] ?? null
@@ -59,28 +56,59 @@ export async function getGameById(twitchGameId) {
 // Returns { viewer_count, channel_count, ranked } for a game category.
 //
 // Strategy:
-//   - Fetch up to 100 streams in one API call (one page)
-//   - Use ALL of them to compute total viewer_count and channel_count
-//     so concentration ratio is accurate (top10 / real_total)
-//   - Store only the top `storeTop` streams in stream_snapshots
-//     to keep DB size manageable
+//   Page 1 (100 streams):
+//     - top 20 stored in stream_snapshots (concentration + browse position)
+//     - sum of all 100 used for viewer_count and channel_count
 //
-// This gives accurate category-level metrics without storing
-// hundreds of rows per snapshot.
+//   If Twitch returns a pagination cursor (more streams exist):
+//     Paginate further in batches of 100, counting only — no storing.
+//     Capped at MAX_CHANNEL_PAGES to avoid rate limit issues.
+//     This gives an accurate channel_count for large categories like
+//     Minecraft (thousands of channels) so density is not overstated.
+//
+//   viewer_count stays as sum of first 100 streams' viewers.
+//   This is intentional — we want the viewer density relative to
+//   real competition, not an inflated total that includes tiny streamers.
+//
 export async function getCategorySnapshot(twitchGameId, storeTop = 20) {
-  // Fetch up to 100 streams in one page — Twitch's max per request
-  const data = await twitchGet('/streams', { game_id: twitchGameId, first: 100 })
-  const streams = data.data ?? []
+  const MAX_CHANNEL_PAGES = 5  // max 500 additional channels counted
 
-  // Total viewers and channels from the full page (up to 100)
-  const viewer_count  = streams.reduce((sum, s) => sum + s.viewer_count, 0)
-  const channel_count = streams.length
+  // Page 1 — fetch top 100 streams
+  const page1 = await twitchGet('/streams', { game_id: twitchGameId, first: 100 })
+  const streams = page1.data ?? []
 
-  // Only store top N for stream_snapshots (concentration + browse position)
+  // viewer_count = sum of top 100 (the meaningful audience)
+  const viewer_count = streams.reduce((sum, s) => sum + s.viewer_count, 0)
+
+  // Start channel count from page 1
+  let channel_count = streams.length
+
+  // Only store top N for stream_snapshots
   const ranked = streams.slice(0, storeTop).map((s, i) => ({
     rank:         i + 1,
     viewer_count: s.viewer_count,
   }))
+
+  // If there are more pages, paginate to get accurate channel_count
+  // We count only — no additional rows stored
+  let cursor = page1.pagination?.cursor
+  let pages  = 0
+
+  while (cursor && pages < MAX_CHANNEL_PAGES) {
+    const next = await twitchGet('/streams', {
+      game_id: twitchGameId,
+      first:   100,
+      after:   cursor,
+    })
+
+    const batch = next.data ?? []
+    channel_count += batch.length
+    cursor = next.pagination?.cursor
+    pages++
+
+    // Stop early if this page came back empty
+    if (!batch.length) break
+  }
 
   return { viewer_count, channel_count, ranked }
 }
