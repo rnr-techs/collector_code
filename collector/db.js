@@ -77,8 +77,10 @@ export async function insertStreamSnapshots({ game_id, captured_at, ranked }) {
 // ── pruneOldSnapshots ──────────────────────────────────────────
 // Deletes snapshots older than 35 days to keep the DB lean.
 // Runs once per collector execution (cheap — indexed on captured_at).
+// 30 days gives full momentum + stability history while keeping
+// DB size manageable with top-20 stream snapshots.
 export async function pruneOldSnapshots() {
-  const cutoff = new Date(Date.now() - 35 * 24 * 60 * 60 * 1000).toISOString()
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
 
   const [cat, str] = await Promise.all([
     getClient().from('category_snapshots').delete().lt('captured_at', cutoff),
