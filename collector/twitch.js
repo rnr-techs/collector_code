@@ -56,37 +56,28 @@ export async function getGameById(twitchGameId) {
 }
 
 // ── getCategorySnapshot ───────────────────────────────────────
-// Returns { viewer_count, channel_count } for a game category.
-// We fetch top-20 streams:
-//   - top-5  → Effective Density
-//   - top-10 → Concentration Ratio
-//   - top-20 → Browse Position (more accurate rank estimate)
-export async function getCategorySnapshot(twitchGameId, maxStreams = 20) {
-  const streams = []
-  let cursor    = null
-  let fetched   = 0
+// Returns { viewer_count, channel_count, ranked } for a game category.
+//
+// Strategy:
+//   - Fetch up to 100 streams in one API call (one page)
+//   - Use ALL of them to compute total viewer_count and channel_count
+//     so concentration ratio is accurate (top10 / real_total)
+//   - Store only the top `storeTop` streams in stream_snapshots
+//     to keep DB size manageable
+//
+// This gives accurate category-level metrics without storing
+// hundreds of rows per snapshot.
+export async function getCategorySnapshot(twitchGameId, storeTop = 20) {
+  // Fetch up to 100 streams in one page — Twitch's max per request
+  const data = await twitchGet('/streams', { game_id: twitchGameId, first: 100 })
+  const streams = data.data ?? []
 
-  while (fetched < maxStreams) {
-    const limit  = Math.min(100, maxStreams - fetched)
-    const params = { game_id: twitchGameId, first: limit }
-    if (cursor) params.after = cursor
-
-    const data = await twitchGet('/streams', params)
-
-    if (!data.data?.length) break
-    streams.push(...data.data)
-    fetched += data.data.length
-
-    cursor = data.pagination?.cursor
-    if (!cursor) break
-  }
-
-  // Sum viewer counts from what we fetched
+  // Total viewers and channels from the full page (up to 100)
   const viewer_count  = streams.reduce((sum, s) => sum + s.viewer_count, 0)
   const channel_count = streams.length
 
-  // Build ranked list (already sorted by viewer_count desc by Twitch)
-  const ranked = streams.map((s, i) => ({
+  // Only store top N for stream_snapshots (concentration + browse position)
+  const ranked = streams.slice(0, storeTop).map((s, i) => ({
     rank:         i + 1,
     viewer_count: s.viewer_count,
   }))
