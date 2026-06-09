@@ -58,29 +58,27 @@ export async function getGameById(twitchGameId) {
 // Strategy:
 //   Page 1 (100 streams):
 //     - top 20 stored in stream_snapshots (concentration + browse position)
-//     - sum of all 100 used for viewer_count and channel_count
+//     - viewers and channel count accumulated from all pages
 //
 //   If Twitch returns a pagination cursor (more streams exist):
-//     Paginate further in batches of 100, counting only — no storing.
+//     Paginate further in batches of 100, accumulating both viewer counts
+//     and channel counts across all pages.
 //     Capped at MAX_CHANNEL_PAGES to avoid rate limit issues.
-//     This gives an accurate channel_count for large categories like
-//     Minecraft (thousands of channels) so density is not overstated.
 //
-//   viewer_count stays as sum of first 100 streams' viewers.
-//   This is intentional — we want the viewer density relative to
-//   real competition, not an inflated total that includes tiny streamers.
+//   viewer_count = sum of all fetched streams' viewers (up to 1,600 channels)
+//   channel_count = total streams fetched (up to 1,600)
+//   Both are consistent — density = viewer_count / channel_count accurately
+//   reflects real competition across the full sampled population.
 //
 export async function getCategorySnapshot(twitchGameId, storeTop = 20) {
-  const MAX_CHANNEL_PAGES = 15  // max 1500 additional channels counted (1600 total)
+  const MAX_CHANNEL_PAGES = 15  // max 1,500 additional channels (1,600 total)
 
   // Page 1 — fetch top 100 streams
   const page1 = await twitchGet('/streams', { game_id: twitchGameId, first: 100 })
   const streams = page1.data ?? []
 
-  // viewer_count = sum of top 100 (the meaningful audience)
-  const viewer_count = streams.reduce((sum, s) => sum + s.viewer_count, 0)
-
-  // Start channel count from page 1
+  // Accumulate viewer count and channel count from page 1
+  let viewer_count  = streams.reduce((sum, s) => sum + s.viewer_count, 0)
   let channel_count = streams.length
 
   // Only store top N for stream_snapshots
@@ -89,8 +87,7 @@ export async function getCategorySnapshot(twitchGameId, storeTop = 20) {
     viewer_count: s.viewer_count,
   }))
 
-  // If there are more pages, paginate to get accurate channel_count
-  // We count only — no additional rows stored
+  // Paginate further — accumulate viewers AND channel count
   let cursor = page1.pagination?.cursor
   let pages  = 0
 
@@ -103,6 +100,7 @@ export async function getCategorySnapshot(twitchGameId, storeTop = 20) {
 
     const batch = next.data ?? []
     channel_count += batch.length
+    viewer_count  += batch.reduce((sum, s) => sum + s.viewer_count, 0)
     cursor = next.pagination?.cursor
     pages++
 
