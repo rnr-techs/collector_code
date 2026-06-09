@@ -1,8 +1,6 @@
 name: Twitch Data Collector v1
 
 on:
-  schedule:
-    - cron: '3,18,33,48 * * * *'     # every 15 minutes
   workflow_dispatch:                 # allow manual trigger from GitHub UI
 
 jobs:
