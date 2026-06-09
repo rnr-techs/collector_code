@@ -56,17 +56,12 @@ export async function getGameById(twitchGameId) {
 }
 
 // ── getCategorySnapshot ───────────────────────────────────────
-// Returns { viewer_count, channel_count } for a game category
-// by paginating /streams up to `maxStreams` results.
-//
-// We fetch top-50 streams (one page of 50) which gives us:
-//   - accurate total viewer count for the top 50
-//   - per-stream viewer counts for concentration analysis
-//   - channel_count = total streams returned
-//
-// Twitch /streams paginates 100 max per page. We use 50 to stay
-// well within rate limits across multiple games per run.
-export async function getCategorySnapshot(twitchGameId, maxStreams = 50) {
+// Returns { viewer_count, channel_count } for a game category.
+// We fetch top-20 streams:
+//   - top-5  → Effective Density
+//   - top-10 → Concentration Ratio
+//   - top-20 → Browse Position (more accurate rank estimate)
+export async function getCategorySnapshot(twitchGameId, maxStreams = 20) {
   const streams = []
   let cursor    = null
   let fetched   = 0
