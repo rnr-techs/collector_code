@@ -110,3 +110,30 @@ export async function getCategorySnapshot(twitchGameId, storeTop = 20) {
 
   return { viewer_count, channel_count, ranked }
 }
+
+// ── getStreamerProfile ────────────────────────────────────────
+// ── getStreamerLiveStatus ──────────────────────────────────────
+// Returns live stream data if the streamer is currently live,
+// null if they're offline.
+// Used by the Phase 2 streamer polling in the collector.
+export async function getStreamerLiveStatus(twitchUserId) {
+  const data = await twitchGet('/streams', { user_id: twitchUserId, first: '1' })
+  const stream = data.data?.[0]
+  if (!stream) return null  // offline
+
+  // Resolve game name if there's a game_id
+  let game_name = null
+  if (stream.game_id) {
+    const gameData = await twitchGet('/games', { id: stream.game_id })
+    game_name = gameData.data?.[0]?.name ?? null
+  }
+
+  return {
+    stream_id:    stream.id,
+    viewer_count: stream.viewer_count,
+    game_id:      stream.game_id || null,
+    game_name,
+    stream_title: stream.title,
+    started_at:   stream.started_at,
+  }
+}
