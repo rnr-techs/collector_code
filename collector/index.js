@@ -42,7 +42,7 @@ async function collectGame(game, capturedAt) {
     await insertStreamSnapshots({ game_id: game.id, captured_at: capturedAt, ranked })
 
     const density = channel_count > 0 ? (viewer_count / channel_count).toFixed(1) : '0'
-    return { name: game.name, ok: true, viewers: viewer_count, channels: channel_count, density, streams: ranked.length, ms: Date.now() - start }
+    return { name: game.name, ok: true, viewers: viewer_count, channels: channel_count, density, ranked, streams: ranked.length, ms: Date.now() - start }
   } catch (err) {
     return { name: game.name, ok: false, err: err.message, ms: Date.now() - start }
   }
@@ -74,10 +74,22 @@ async function collectStreamer(streamer, capturedAt, categorySnapshotMap) {
         : null
       category_channels = catSnap.channel_count
 
-      // Estimate browse position: count ranked streams with more viewers
+      // Estimate browse position using same logic as fn_browse_position:
+      // - Exact if streamer is within the top-20 stored streams
+      // - Interpolated beyond top-20 using rank-20 viewer count as reference
       const ranked = catSnap.ranked ?? []
       const above  = ranked.filter(s => s.viewer_count > live.viewer_count).length
-      estimated_position = above + 1
+      const rank20Viewers = ranked.length > 0 ? ranked[ranked.length - 1].viewer_count : 0
+
+      if (live.viewer_count >= rank20Viewers || catSnap.channel_count <= 20) {
+        // Exact — streamer is within top-20
+        estimated_position = above + 1
+      } else {
+        // Interpolate beyond top-20
+        const remaining = Math.max(catSnap.channel_count - 20, 1)
+        const ratio = Math.max(1.0 - (live.viewer_count / Math.max(rank20Viewers, 1)), 0)
+        estimated_position = Math.min(20 + Math.round(ratio * remaining), catSnap.channel_count)
+      }
     }
 
     await insertStreamerSnapshot({
