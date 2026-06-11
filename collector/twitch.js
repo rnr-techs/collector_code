@@ -84,12 +84,18 @@ export async function getCategorySnapshot(twitchGameId, storeTop = 20) {
   // Only store top N for stream_snapshots
   const ranked = streams.slice(0, storeTop).map((s, i) => ({
     rank:         i + 1,
+    stream_id:    s.id,           // Twitch stream ID for exact position matching
     viewer_count: s.viewer_count,
   }))
 
   // Paginate further — accumulate viewers AND channel count
-  let cursor = page1.pagination?.cursor
-  let pages  = 0
+  // Also track position of any stream found by ID (for exact position matching)
+  let cursor   = page1.pagination?.cursor
+  let pages    = 0
+  let pageRank = streams.length  // rank offset for subsequent pages
+
+  // Store additional ranked entries for position matching (beyond top-20)
+  const allRanked = [...ranked]
 
   while (cursor && pages < MAX_CHANNEL_PAGES) {
     const next = await twitchGet('/streams', {
@@ -101,14 +107,23 @@ export async function getCategorySnapshot(twitchGameId, storeTop = 20) {
     const batch = next.data ?? []
     channel_count += batch.length
     viewer_count  += batch.reduce((sum, s) => sum + s.viewer_count, 0)
+
+    // Add to ranked for position matching (store all, not just top-20)
+    batch.forEach((s, i) => {
+      allRanked.push({
+        rank:         pageRank + i + 1,
+        stream_id:    s.id,
+        viewer_count: s.viewer_count,
+      })
+    })
+    pageRank += batch.length
+
     cursor = next.pagination?.cursor
     pages++
-
-    // Stop early if this page came back empty
     if (!batch.length) break
   }
 
-  return { viewer_count, channel_count, ranked }
+  return { viewer_count, channel_count, ranked: allRanked }
 }
 
 // ── getStreamerProfile ────────────────────────────────────────
