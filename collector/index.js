@@ -69,26 +69,34 @@ async function collectStreamer(streamer, capturedAt, categorySnapshotMap) {
     let estimated_position  = null
 
     if (catSnap) {
-      category_density  = catSnap.channel_count > 0
+      category_density = catSnap.channel_count > 0
         ? Math.round(catSnap.viewer_count / catSnap.channel_count * 10) / 10
         : null
       category_channels = catSnap.channel_count
 
-      // Estimate browse position using same logic as fn_browse_position:
-      // - Exact if streamer is within the top-20 stored streams
-      // - Interpolated beyond top-20 using rank-20 viewer count as reference
-      const ranked = catSnap.ranked ?? []
-      const above  = ranked.filter(s => s.viewer_count > live.viewer_count).length
-      const rank20Viewers = ranked.length > 0 ? ranked[ranked.length - 1].viewer_count : 0
+      // Get exact position by fetching the full category stream list
+      // and finding where the streamer's viewer count falls.
+      // We already have up to 1,600 streams in categorySnapshotMap via
+      // the ranked array — use the streamer's stream_id to find exact rank,
+      // or fall back to viewer count interpolation.
+      const ranked    = catSnap.ranked ?? []
+      const streamIdx = ranked.findIndex(s => s.stream_id === live.stream_id)
 
-      if (live.viewer_count >= rank20Viewers || catSnap.channel_count <= 20) {
-        // Exact — streamer is within top-20
-        estimated_position = above + 1
+      if (streamIdx !== -1) {
+        // Exact — streamer found in the ranked list
+        estimated_position = streamIdx + 1
       } else {
-        // Interpolate beyond top-20
-        const remaining = Math.max(catSnap.channel_count - 20, 1)
-        const ratio = Math.max(1.0 - (live.viewer_count / Math.max(rank20Viewers, 1)), 0)
-        estimated_position = Math.min(20 + Math.round(ratio * remaining), catSnap.channel_count)
+        // Not in stored top-20, interpolate using viewer count
+        const above        = ranked.filter(s => s.viewer_count > live.viewer_count).length
+        const rank20viewers = ranked.length > 0 ? ranked[ranked.length - 1].viewer_count : 0
+
+        if (live.viewer_count >= rank20viewers || catSnap.channel_count <= 20) {
+          estimated_position = above + 1
+        } else {
+          const remaining = Math.max(catSnap.channel_count - 20, 1)
+          const ratio = Math.max(1.0 - (live.viewer_count / Math.max(rank20viewers, 1)), 0)
+          estimated_position = Math.min(20 + Math.round(ratio * remaining), catSnap.channel_count)
+        }
       }
     }
 
