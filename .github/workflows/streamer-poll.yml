@@ -1,0 +1,33 @@
+name: Streamer Live Poll
+
+on:
+  workflow_dispatch:         # triggered externally by cron-job.org every 2 min
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3        # fail fast — this should be quick
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: collector/package-lock.json
+
+      - name: Install dependencies
+        working-directory: collector
+        run: npm ci
+
+      - name: Run streamer poll
+        working-directory: collector
+        env:
+          TWITCH_CLIENT_ID:      ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET:  ${{ secrets.TWITCH_CLIENT_SECRET }}
+          SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY:  ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: node streamer-poll.js
