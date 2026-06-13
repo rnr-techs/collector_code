@@ -123,7 +123,12 @@ export async function getCategorySnapshot(twitchGameId, storeTop = 20) {
     if (!batch.length) break
   }
 
-  return { viewer_count, channel_count, ranked: allRanked }
+  return {
+    viewer_count,
+    channel_count,
+    ranked:     ranked,      // top-N only (storeTop) — for DB insertion
+    allRanked:  allRanked,   // up to 1,600 — for in-memory position matching
+  }
 }
 
 // ── getStreamerProfile ────────────────────────────────────────
