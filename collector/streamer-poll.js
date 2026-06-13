@@ -41,19 +41,19 @@ async function pollStreamer(streamer, capturedAt) {
       const game = await getGameByTwitchId(live.game_id)
 
       if (game) {
-        const { viewer_count, channel_count, ranked } = await getCategorySnapshot(live.game_id)
+        const { channel_count, viewer_count, allRanked } = await getCategorySnapshot(live.game_id)
 
         category_density  = channel_count > 0 ? Math.round(viewer_count / channel_count * 10) / 10 : null
         category_channels = channel_count
 
-        // Exact position via stream_id match (ranked includes stream_id up to 1,600 channels)
-        const streamIdx = ranked.findIndex(s => s.stream_id === live.stream_id)
+        // Exact position via stream_id match (allRanked includes stream_id up to 1,600 channels)
+        const streamIdx = allRanked.findIndex(s => s.stream_id === live.stream_id)
 
         if (streamIdx !== -1) {
           estimated_position = streamIdx + 1
         } else {
-          const above = ranked.filter(s => s.viewer_count > live.viewer_count).length
-          const rank20viewers = ranked.length >= 20 ? ranked[19].viewer_count : 0
+          const above = allRanked.filter(s => s.viewer_count > live.viewer_count).length
+          const rank20viewers = allRanked.length >= 20 ? allRanked[19].viewer_count : 0
 
           if (live.viewer_count >= rank20viewers || channel_count <= 20) {
             estimated_position = above + 1
