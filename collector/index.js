@@ -1,22 +1,22 @@
 // collector/index.js
-// Main entry point. Runs once per cron-job.org invocation (every 10 min).
+// Main entry point. Runs every 10 minutes via GitHub Actions.
 //
 // Flow:
 //   1. Load tracked games from Supabase
 //   2. For each game: hit Twitch Helix, write category + stream snapshots
-//   3. Load tracked streamers from Supabase
-//   4. For each streamer: check if live, if so write a streamer_snapshot
-//      with viewer count + category context at that moment
-//   5. Prune old snapshots
-//   6. Log summary and exit
+//   3. Prune old snapshots
+//   4. Log summary and exit
+//
+// NOTE: Streamer live-status polling is handled separately by
+// streamer-poll.js, which runs every 2 minutes for a smoother
+// viewer-count curve. This collector no longer writes to
+// streamer_snapshots.
 
-import { getCategorySnapshot, getStreamerLiveStatus } from './twitch.js'
+import { getCategorySnapshot } from './twitch.js'
 import {
   getTrackedGames,
-  getTrackedStreamers,
   insertCategorySnapshot,
   insertStreamSnapshots,
-  insertStreamerSnapshot,
   pruneOldSnapshots,
 } from './db.js'
 
@@ -52,82 +52,6 @@ async function collectGame(game, capturedAt) {
 // Checks if a streamer is live. If so, captures their viewer count
 // and cross-references with the category snapshot from this same run
 // to calculate their density context and estimated browse position.
-async function collectStreamer(streamer, capturedAt, categorySnapshotMap) {
-  const start = Date.now()
-  try {
-    const live = await getStreamerLiveStatus(streamer.twitch_user_id)
-
-    if (!live) {
-      console.log(`  ○ ${streamer.twitch_login.padEnd(20)} offline`)
-      return { name: streamer.twitch_login, ok: true, live: false, ms: Date.now() - start }
-    }
-
-    // Cross-reference with category snapshot from this run
-    const catSnap = live.game_id ? categorySnapshotMap[live.game_id] : null
-    let category_density    = null
-    let category_channels   = null
-    let estimated_position  = null
-
-    if (catSnap) {
-      category_density = catSnap.channel_count > 0
-        ? Math.round(catSnap.viewer_count / catSnap.channel_count * 10) / 10
-        : null
-      category_channels = catSnap.channel_count
-
-      // Get exact position by fetching the full category stream list
-      // and finding where the streamer's viewer count falls.
-      // We already have up to 1,600 streams in categorySnapshotMap via
-      // the ranked array — use the streamer's stream_id to find exact rank,
-      // or fall back to viewer count interpolation.
-      const ranked    = catSnap.ranked ?? []
-      const streamIdx = ranked.findIndex(s => s.stream_id === live.stream_id)
-
-      if (streamIdx !== -1) {
-        // Exact — streamer found in the ranked list
-        estimated_position = streamIdx + 1
-      } else {
-        // Not in stored top-20, interpolate using viewer count
-        const above        = ranked.filter(s => s.viewer_count > live.viewer_count).length
-        const rank20viewers = ranked.length > 0 ? ranked[ranked.length - 1].viewer_count : 0
-
-        if (live.viewer_count >= rank20viewers || catSnap.channel_count <= 20) {
-          estimated_position = above + 1
-        } else {
-          const remaining = Math.max(catSnap.channel_count - 20, 1)
-          const ratio = Math.max(1.0 - (live.viewer_count / Math.max(rank20viewers, 1)), 0)
-          estimated_position = Math.min(20 + Math.round(ratio * remaining), catSnap.channel_count)
-        }
-      }
-    }
-
-    await insertStreamerSnapshot({
-      user_id:            streamer.user_id,
-      captured_at:        capturedAt,
-      stream_id:          live.stream_id,
-      viewer_count:       live.viewer_count,
-      game_id:            live.game_id,
-      game_name:          live.game_name,
-      stream_title:       live.stream_title,
-      category_density,
-      category_channels,
-      estimated_position,
-    })
-
-    console.log(
-      `  ✓ ${streamer.twitch_login.padEnd(20)} LIVE  ` +
-      `viewers=${String(live.viewer_count).padStart(4)}  ` +
-      `game=${live.game_name ?? 'unknown'}  ` +
-      `pos=${estimated_position ?? '?'}  ` +
-      `(${Date.now() - start}ms)`
-    )
-
-    return { name: streamer.twitch_login, ok: true, live: true, ms: Date.now() - start }
-  } catch (err) {
-    console.error(`  ✗ ${streamer.twitch_login}: ${err.message}`)
-    return { name: streamer.twitch_login, ok: false, err: err.message, ms: Date.now() - start }
-  }
-}
-
 // ── main ──────────────────────────────────────────────────────
 async function main() {
   console.log('=== DeCipher Collector ===')
@@ -137,12 +61,10 @@ async function main() {
 
   const capturedAt = new Date().toISOString()
 
-  // ── Phase 1: Category snapshots ──────────────────────────────
+  // ── Category snapshots ────────────────────────────────────────
   const games = await getTrackedGames()
   console.log(`\nTracking ${games.length} game(s): ${games.map(g => g.name).join(', ')}`)
 
-  // Build a map of twitch_game_id -> snapshot data for streamer cross-referencing
-  const categorySnapshotMap = {}
   const gameResults = []
 
   for (const game of games) {
@@ -150,12 +72,6 @@ async function main() {
     gameResults.push(result)
 
     if (result.ok) {
-      // Store snapshot data for streamer position estimation
-      categorySnapshotMap[game.twitch_game_id] = {
-        viewer_count:  result.viewers,
-        channel_count: result.channels,
-        ranked:        result.ranked ?? [],
-      }
       console.log(
         `  ✓ ${result.name.padEnd(20)} ` +
         `viewers=${String(result.viewers).padStart(6)}  ` +
@@ -165,15 +81,6 @@ async function main() {
       )
     } else {
       console.error(`  ✗ ${result.name}: ${result.err}`)
-    }
-  }
-
-  // ── Phase 2: Streamer live polling ────────────────────────────
-  const streamers = await getTrackedStreamers()
-  if (streamers.length > 0) {
-    console.log(`\nPolling ${streamers.length} streamer(s)...`)
-    for (const streamer of streamers) {
-      await collectStreamer(streamer, capturedAt, categorySnapshotMap)
     }
   }
 
