@@ -84,6 +84,21 @@ export async function insertStreamerSnapshot({
   if (error) throw new Error(`insertStreamerSnapshot: ${error.message}`)
 }
 
+// ── getGameByTwitchId ────────────────────────────────────────────
+// Returns the internal game UUID + name for a given Twitch game ID,
+// or null if that game isn't tracked. Used by streamer-poll.js to
+// check whether the streamer's current game is one we collect data for.
+export async function getGameByTwitchId(twitchGameId) {
+  const { data, error } = await getClient()
+    .from('games')
+    .select('id, name')
+    .eq('twitch_game_id', twitchGameId)
+    .maybeSingle()
+
+  if (error) throw new Error(`getGameByTwitchId: ${error.message}`)
+  return data
+}
+
 // ── pruneOldSnapshots ──────────────────────────────────────────
 export async function pruneOldSnapshots() {
   const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
