@@ -18,6 +18,7 @@ import {
   insertCategorySnapshot,
   insertStreamSnapshots,
   pruneOldSnapshots,
+  refreshMaterialisedViews,
 } from './db.js'
 
 function validateEnv() {
