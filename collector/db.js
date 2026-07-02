@@ -100,23 +100,10 @@ export async function getGameByTwitchId(twitchGameId) {
 }
 
 // ── pruneOldSnapshots ──────────────────────────────────────────
-// Retention windows are intentionally different per table:
-//
-//   category_snapshots  — 90 days
-//     Feeds v_hourly_density, v_daily_density, v_hourly_only_density.
-//     The recency-weighted scoring benefits from longer history: older
-//     data is naturally discounted by the decay factor so it doesn't
-//     distort results, but having 90 days means seasonal/weekly patterns
-//     have more samples to stabilise confidence and consistency scores.
-//
-//   stream_snapshots    — 30 days
-//     Used for concentration and browse position (rolling current state).
-//     No benefit from longer retention here.
-//
-//   streamer_snapshots  — 30 days
-//     Feeds the streamer metrics page which shows the last 30 days of
-//     sessions. Extending this would require a UI change too.
-//
+// Retention windows differ per table:
+//   category_snapshots  — 90 days (feeds density analytics)
+//   stream_snapshots    — 30 days (rolling current state)
+//   streamer_snapshots  — 30 days (streamer metrics page)
 export async function pruneOldSnapshots() {
   const cutoff90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString()
   const cutoff30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
@@ -130,4 +117,14 @@ export async function pruneOldSnapshots() {
   if (cat.error)  console.warn('Prune category_snapshots:', cat.error.message)
   if (str.error)  console.warn('Prune stream_snapshots:', str.error.message)
   if (snap.error) console.warn('Prune streamer_snapshots:', snap.error.message)
+}
+
+// ── refreshMaterialisedViews ───────────────────────────────────
+// Refreshes mv_hourly_effective_density after each collector run
+// so slot rankings always reflect the latest 30 days of data.
+// Uses CONCURRENTLY so reads are not blocked during refresh.
+export async function refreshMaterialisedViews() {
+  const { error } = await getClient().rpc('refresh_mv_effective_density')
+  if (error) console.warn('Refresh mv_hourly_effective_density:', error.message)
+  else console.log('  ✓ mv_hourly_effective_density refreshed')
 }
