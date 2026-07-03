@@ -124,7 +124,12 @@ export async function pruneOldSnapshots() {
 // so slot rankings always reflect the latest 30 days of data.
 // Uses CONCURRENTLY so reads are not blocked during refresh.
 export async function refreshMaterialisedViews() {
-  const { error } = await getClient().rpc('refresh_mv_effective_density')
-  if (error) console.warn('Refresh mv_hourly_effective_density:', error.message)
+  const [r1, r2] = await Promise.all([
+    getClient().rpc('refresh_mv_effective_density'),
+    getClient().rpc('refresh_mv_slot_history'),
+  ])
+  if (r1.error) console.warn('Refresh mv_hourly_effective_density:', r1.error.message)
   else console.log('  ✓ mv_hourly_effective_density refreshed')
+  if (r2.error) console.warn('Refresh mv_slot_history:', r2.error.message)
+  else console.log('  ✓ mv_slot_history refreshed')
 }
