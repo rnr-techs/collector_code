@@ -40,14 +40,50 @@ export async function getTrackedGames() {
 }
 
 // ── getTrackedStreamers ────────────────────────────────────────
-// Returns all users who have a streamer_profile row (Twitch linked).
+// Returns all unique streamers from the global streamers table.
 // The collector polls these every run to check if they're live.
+// Now queries streamers table (not streamer_profile) so all
+// tracked streamers across all users are included.
 export async function getTrackedStreamers() {
   const { data, error } = await getClient()
-    .from('streamer_profile')
-    .select('user_id, twitch_user_id, twitch_login, display_name')
+    .from('streamers')
+    .select('id, twitch_user_id, twitch_login, display_name')
   if (error) throw new Error(`getTrackedStreamers: ${error.message}`)
   return data ?? []
+}
+
+// ── upsertStreamer ─────────────────────────────────────────────
+// Creates or updates a streamer in the global streamers table.
+// Called by the API route when a user connects/refreshes a streamer.
+export async function upsertStreamer({
+  twitch_user_id, twitch_login, display_name,
+  profile_image_url, broadcaster_type, account_created, description,
+}) {
+  const { data, error } = await getClient()
+    .from('streamers')
+    .upsert({
+      twitch_user_id, twitch_login, display_name,
+      profile_image_url, broadcaster_type, account_created, description,
+      fetched_at: new Date().toISOString(),
+    }, { onConflict: 'twitch_user_id' })
+    .select('id')
+    .single()
+  if (error) throw new Error(`upsertStreamer: ${error.message}`)
+  return data
+}
+
+// ── linkUserStreamer ───────────────────────────────────────────
+// Links a DeCipher user to a streamer in user_streamers.
+// Safe to call multiple times — ON CONFLICT DO NOTHING.
+export async function linkUserStreamer(userId, streamerId) {
+  const { error } = await getClient()
+    .from('user_streamers')
+    .insert({ user_id: userId, streamer_id: streamerId })
+    .throwOnError()
+  // Ignore duplicate — user already tracks this streamer
+  if (error && !error.message.includes('duplicate')) {
+    throw new Error(`linkUserStreamer: ${error.message}`)
+  }
 }
 
 // ── insertCategorySnapshot ─────────────────────────────────────
@@ -68,42 +104,66 @@ export async function insertStreamSnapshots({ game_id, captured_at, ranked }) {
 
 // ── insertStreamerSnapshot ─────────────────────────────────────
 // Writes one row when a tracked streamer is live.
-// Also stores category context (density, position) at that moment.
+// Now keyed by streamer_id (global) not user_id (per-user).
 export async function insertStreamerSnapshot({
-  user_id, captured_at, stream_id, viewer_count,
+  streamer_id, captured_at, stream_id, viewer_count,
   game_id, game_name, stream_title,
   category_density, category_channels, estimated_position,
 }) {
   const { error } = await getClient()
     .from('streamer_snapshots')
     .upsert({
-      user_id, captured_at, stream_id, viewer_count,
+      streamer_id, captured_at, stream_id, viewer_count,
       game_id, game_name, stream_title,
       category_density, category_channels, estimated_position,
-    }, { onConflict: 'user_id,captured_at' })
+    }, { onConflict: 'streamer_id,captured_at' })
   if (error) throw new Error(`insertStreamerSnapshot: ${error.message}`)
 }
 
-// ── getGameByTwitchId ────────────────────────────────────────────
+// ── getGameByTwitchId ──────────────────────────────────────────
 // Returns the internal game UUID + name for a given Twitch game ID,
-// or null if that game isn't tracked. Used by streamer-poll.js to
-// check whether the streamer's current game is one we collect data for.
+// or null if that game isn't tracked.
 export async function getGameByTwitchId(twitchGameId) {
   const { data, error } = await getClient()
     .from('games')
     .select('id, name')
     .eq('twitch_game_id', twitchGameId)
     .maybeSingle()
-
   if (error) throw new Error(`getGameByTwitchId: ${error.message}`)
   return data
 }
 
+// ── ensureGameExists ───────────────────────────────────────────
+// Auto-detects new games from streamer sessions.
+// If a game isn't in the games table, inserts it so it can be
+// tracked and optionally added to owned_games later.
+// Returns the game's internal UUID.
+export async function ensureGameExists({ twitch_game_id, name, box_art_url }) {
+  // Check if already exists
+  const existing = await getGameByTwitchId(twitch_game_id)
+  if (existing) return existing.id
+
+  // Insert new game
+  const { data, error } = await getClient()
+    .from('games')
+    .insert({ twitch_game_id, name, box_art_url })
+    .select('id')
+    .single()
+
+  if (error) {
+    // Handle race condition — another process may have inserted it
+    if (error.message.includes('duplicate') || error.message.includes('unique')) {
+      const existing2 = await getGameByTwitchId(twitch_game_id)
+      return existing2?.id ?? null
+    }
+    throw new Error(`ensureGameExists: ${error.message}`)
+  }
+
+  console.log(`  + New game detected and added: ${name} (${twitch_game_id})`)
+  return data.id
+}
+
 // ── pruneOldSnapshots ──────────────────────────────────────────
-// Retention windows differ per table:
-//   category_snapshots  — 90 days (feeds density analytics)
-//   stream_snapshots    — 30 days (rolling current state)
-//   streamer_snapshots  — 30 days (streamer metrics page)
 export async function pruneOldSnapshots() {
   const cutoff90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString()
   const cutoff30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
@@ -120,9 +180,6 @@ export async function pruneOldSnapshots() {
 }
 
 // ── refreshMaterialisedViews ───────────────────────────────────
-// Refreshes mv_hourly_effective_density after each collector run
-// so slot rankings always reflect the latest 30 days of data.
-// Uses CONCURRENTLY so reads are not blocked during refresh.
 export async function refreshMaterialisedViews() {
   const [r1, r2, r3, r4] = await Promise.all([
     getClient().rpc('refresh_mv_effective_density'),
