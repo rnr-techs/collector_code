@@ -4,7 +4,7 @@
 // and writes streamer_id (not user_id) to streamer_snapshots.
 // Auto-detects new games and adds them to the games table.
 
-import { getStreamerLiveStatus, getCategorySnapshot, getGameDetails } from './twitch.js'
+import { getStreamerLiveStatus, getCategorySnapshot } from './twitch.js'
 import {
   getTrackedStreamers,
   insertStreamerSnapshot,
