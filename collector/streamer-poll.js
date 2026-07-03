@@ -1,21 +1,16 @@
 // collector/streamer-poll.js
-// High-frequency streamer live check — runs every 2 minutes via a
-// separate GitHub Actions workflow.
-//
-// For each tracked streamer:
-//   - Check live status via /helix/streams
-//   - If live and playing a tracked game: fetch a fresh category
-//     snapshot (same call as the main collector) to get the exact
-//     stream_id ranking and calculate precise browse position
-//   - Insert a streamer_snapshots row
-//
-// This is the SOLE writer of streamer_snapshots — the main 10-15min
-// collector (index.js) no longer performs a redundant streamer check.
-// Category data (category_snapshots, stream_snapshots tables) is
-// still written only by the main collector, not this script.
+// High-frequency streamer live check — runs every 2 minutes.
+// Now polls the global streamers table (not streamer_profile)
+// and writes streamer_id (not user_id) to streamer_snapshots.
+// Auto-detects new games and adds them to the games table.
 
-import { getStreamerLiveStatus, getCategorySnapshot } from './twitch.js'
-import { getTrackedStreamers, insertStreamerSnapshot, getGameByTwitchId } from './db.js'
+import { getStreamerLiveStatus, getCategorySnapshot, getGameDetails } from './twitch.js'
+import {
+  getTrackedStreamers,
+  insertStreamerSnapshot,
+  getGameByTwitchId,
+  ensureGameExists,
+} from './db.js'
 
 function validateEnv() {
   const required = ['TWITCH_CLIENT_ID', 'TWITCH_CLIENT_SECRET', 'SUPABASE_URL', 'SUPABASE_SERVICE_KEY']
@@ -32,12 +27,22 @@ async function pollStreamer(streamer, capturedAt) {
       return { ok: true, live: false }
     }
 
-    // Fetch fresh category data for exact stream_id position matching
     let category_density   = null
     let category_channels  = null
     let estimated_position = null
 
     if (live.game_id) {
+      // Auto-detect: ensure game exists in games table even if not in owned_games
+      // This builds the catalogue so users can add it later
+      if (live.game_name) {
+        await ensureGameExists({
+          twitch_game_id: live.game_id,
+          name: live.game_name,
+          box_art_url: live.box_art_url ?? null,
+        })
+      }
+
+      // Only fetch category snapshot if game is tracked (in games table)
       const game = await getGameByTwitchId(live.game_id)
 
       if (game) {
@@ -46,7 +51,6 @@ async function pollStreamer(streamer, capturedAt) {
         category_density  = channel_count > 0 ? Math.round(viewer_count / channel_count * 10) / 10 : null
         category_channels = channel_count
 
-        // Exact position via stream_id match (allRanked includes stream_id up to 1,600 channels)
         const streamIdx = allRanked.findIndex(s => s.stream_id === live.stream_id)
 
         if (streamIdx !== -1) {
@@ -66,8 +70,9 @@ async function pollStreamer(streamer, capturedAt) {
       }
     }
 
+    // Write using streamer_id (global) not user_id (per-user)
     await insertStreamerSnapshot({
-      user_id:            streamer.user_id,
+      streamer_id:        streamer.id,
       captured_at:        capturedAt,
       stream_id:          live.stream_id,
       viewer_count:       live.viewer_count,
