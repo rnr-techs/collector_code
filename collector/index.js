@@ -85,10 +85,13 @@ async function main() {
     }
   }
 
+  // ── refresh Materialised Views ────────────────────────────────────────────
+  await refreshMaterialisedViews()
+  
   // ── Prune old data ────────────────────────────────────────────
   console.log('\nPruning old snapshots...')
   await pruneOldSnapshots()
-
+  
   // ── Summary ───────────────────────────────────────────────────
   const passed = gameResults.filter(r => r.ok).length
   const failed = gameResults.filter(r => !r.ok).length
